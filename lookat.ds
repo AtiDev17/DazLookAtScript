@@ -277,7 +277,7 @@
     }
 
     var dlg = new DzDialog();
-    dlg.caption = "Look Control (Unified)";
+    dlg.caption = "Look Control";
 
     var layout = new DzVBoxLayout(dlg);
     layout.margin = 15;
