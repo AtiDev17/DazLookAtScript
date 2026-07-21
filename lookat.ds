@@ -1,0 +1,353 @@
+// DAZ Studio version 6.0 filetype DAZ Script
+(function() {
+    var globalUndoStack = (new Function("return this;"))().UndoStack;
+    function beginUndo() { if (globalUndoStack) globalUndoStack.beginHold(); }
+    function acceptUndo(s) { if (globalUndoStack) globalUndoStack.accept(s); }
+    function cancelUndo() { if (globalUndoStack) globalUndoStack.cancel(); }
+
+    var initialPrimary = {};
+    var initialSecondary = {};
+    var redo = false;
+    var primarySkel = null;
+    var secondarySkel = null;
+    var cmbMode = null;
+    var chkEyes = null;
+    var chkHead = null;
+    var chkBody = null;
+
+    function saveInitialRotations(skel, storage) {
+        if (!skel) return;
+        var bones = getAllBones(skel);
+        for (var i = 0; i < bones.length; i++) {
+            var bone = bones[i];
+            if (bone) {
+                storage[bone.getName()] = {
+                    x: bone.getXRotControl().getValue(),
+                    y: bone.getYRotControl().getValue()
+                };
+            }
+        }
+    }
+
+    function restoreInitialRotations(skel, storage) {
+        if (!skel) return;
+        for (var name in storage) {
+            var bone = skel.findBone(name);
+            if (bone && storage[name]) {
+                bone.getXRotControl().setValue(storage[name].x);
+                bone.getYRotControl().setValue(storage[name].y);
+            }
+        }
+    }
+
+    function getFigureType(skel) {
+        return skel ? skel.getName() : "";
+    }
+
+    function getAllBones(skel) {
+        var figType = getFigureType(skel);
+        var leftEye, rightEye, lowerNeck, upperNeck, head, chest, abdomen;
+        if (figType.indexOf('Genesis9') !== -1) {
+            leftEye = skel.findBone("l_eye");
+            rightEye = skel.findBone("r_eye");
+            lowerNeck = skel.findBone("neck1");
+            upperNeck = skel.findBone("neck2");
+            head = skel.findBone("head");
+            chest = skel.findBone("spine3");
+            abdomen = skel.findBone("spine1");
+        } else if (figType.indexOf('Genesis2') !== -1) {
+            leftEye = skel.findBone("lEye");
+            rightEye = skel.findBone("rEye");
+            head = skel.findBone("head");
+            abdomen = skel.findBone("abdomen");
+            chest = skel.findBone("chest");
+            lowerNeck = skel.findBone("neck");
+            upperNeck = skel.findBone("neck");
+        } else {
+            leftEye = skel.findBone("lEye");
+            rightEye = skel.findBone("rEye");
+            lowerNeck = skel.findBone("neckLower");
+            upperNeck = skel.findBone("neckUpper");
+            head = skel.findBone("head");
+            chest = skel.findBone("chestLower");
+            abdomen = skel.findBone("abdomenLower");
+        }
+        return [leftEye, rightEye, lowerNeck, upperNeck, head, chest, abdomen];
+    }
+
+    function adjustBone(bone, invParentRot, secondaryPos, intensity, xSign, ySign) {
+        if (!bone) return;
+        var bonePos = bone.getWSPos();
+        var boneDir = new DzVec3(secondaryPos.x - bonePos.x, secondaryPos.y - bonePos.y, secondaryPos.z - bonePos.z);
+        boneDir.normalize();
+
+        var localDir = invParentRot.multVec(boneDir);
+        localDir.normalize();
+
+        var lx = localDir.x;
+        var ly = localDir.y;
+        var lz = localDir.z;
+
+        var sinX = -ly;
+        var xRad = Math.asin(sinX);
+        var xDeg = xRad * (180 / Math.PI) * intensity;
+
+        var cosX = Math.sqrt(1 - sinX * sinX);
+        var yDeg = 0;
+        if (cosX > 0.0001) {
+            var sinY = lx / cosX;
+            var cosY = lz / cosX;
+            var yRad = Math.atan2(sinY, cosY);
+            yDeg = yRad * (180 / Math.PI) * intensity;
+        }
+
+        bone.getXRotControl().setValue(-(xSign * xDeg));
+        bone.getYRotControl().setValue((ySign * yDeg));
+    }
+
+    function processSkel(skel, targetNode) {
+        var bones = getAllBones(skel);
+        var leftEye = bones[0];
+        var rightEye = bones[1];
+        var lowerNeck = bones[2];
+        var upperNeck = bones[3];
+        var head = bones[4];
+        var chest = bones[5];
+        var abdomen = bones[6];
+
+        if (!leftEye || !rightEye || !lowerNeck || !upperNeck || !head || !chest || !abdomen) {
+            return false;
+        }
+
+        var secondaryPos = targetNode.getWSPos();
+        var intensity = 1.0;
+
+        if (chkEyes.checked) {
+            var eyesParent = leftEye.getNodeParent();
+            if (!eyesParent || !eyesParent.inherits("DzBone")) return false;
+            var invEyesParent = eyesParent.getWSRot().inverse();
+            adjustBone(leftEye, invEyesParent, secondaryPos, intensity * 1.0, 1, -1);
+            adjustBone(rightEye, invEyesParent, secondaryPos, intensity * 1.0, 1, -1);
+        }
+
+        if (chkHead.checked) {
+            var lowerNeckParent = lowerNeck.getNodeParent();
+            if (!lowerNeckParent || !lowerNeckParent.inherits("DzBone")) return false;
+            var invLowerNeckParent = lowerNeckParent.getWSRot().inverse();
+
+            var upperNeckParent = upperNeck.getNodeParent();
+            if (!upperNeckParent || !upperNeckParent.inherits("DzBone")) return false;
+            var invUpperNeckParent = upperNeckParent.getWSRot().inverse();
+
+            var headParent = head.getNodeParent();
+            if (!headParent || !headParent.inherits("DzBone")) return false;
+            var invHeadParent = headParent.getWSRot().inverse();
+
+            adjustBone(lowerNeck, invLowerNeckParent, secondaryPos, intensity * 0.25, -1, 1);
+            adjustBone(upperNeck, invUpperNeckParent, secondaryPos, intensity * 0.25, -1, 1);
+            adjustBone(head, invHeadParent, secondaryPos, intensity * 0.40, -1, 1);
+        }
+        if (chkBody.checked) {
+            var chestParent = chest.getNodeParent();
+            if (!chestParent || !chestParent.inherits("DzBone")) return false;
+            var invChestParent = chestParent.getWSRot().inverse();
+
+            var abdomenParent = abdomen.getNodeParent();
+            if (!abdomenParent || !abdomenParent.inherits("DzBone")) return false;
+            var invAbdomenParent = abdomenParent.getWSRot().inverse();
+
+            adjustBone(chest, invChestParent, secondaryPos, intensity * 0.15, -1, 1);
+            adjustBone(abdomen, invAbdomenParent, secondaryPos, intensity * 0.05, -1, 1);
+        }
+
+        return true;
+    }
+
+    function getActiveCamera() {
+        var oViewMgr = MainWindow.getViewportMgr();
+        var oViewport = oViewMgr.getActiveViewport();
+        var o3DViewport = oViewport.get3DViewport();
+        return o3DViewport.getCamera();
+    }
+
+    function doLookAt() {
+        var sl = Scene.getSelectedNodeList();
+        if (sl.length < 1) {
+            MessageBox.information("Please select at least one figure.", "Selection Error", "&OK");
+            return false;
+        }
+
+        var primary = sl[0].getSkeleton();
+        if (!primary) {
+            MessageBox.information("The primary selection must be a figure with a skeleton.", "Selection Error", "&OK");
+            return false;
+        }
+
+        var secondary = (sl.length >= 2) ? sl[1].getSkeleton() : null;
+        var mode = cmbMode.currentItem;
+
+        if (primary != primarySkel || secondary != secondarySkel) {
+            initialPrimary = {};
+            initialSecondary = {};
+            primarySkel = primary;
+            secondarySkel = secondary;
+            redo = false;
+        }
+
+        if (mode === 1) {
+            if (sl.length < 2) {
+                MessageBox.information("Look at Each Other requires exactly two selected figures.", "Selection Error", "&OK");
+                return false;
+            }
+            if (!secondarySkel) {
+                MessageBox.information("The second selection must be a figure with a skeleton.", "Selection Error", "&OK");
+                return false;
+            }
+            if (primary == secondarySkel) {
+                MessageBox.information("Please select two DIFFERENT figures.", "Selection Error", "&OK");
+                return false;
+            }
+        } else if (mode === 2) {
+            if (sl.length < 2) {
+                MessageBox.information("Look at That requires a figure and a target object selected.", "Selection Error", "&OK");
+                return false;
+            }
+        }
+        if (Object.keys(initialPrimary).length === 0) {
+            saveInitialRotations(primary, initialPrimary);
+        }
+        if (secondarySkel && Object.keys(initialSecondary).length === 0) {
+            saveInitialRotations(secondarySkel, initialSecondary);
+        }
+
+        setBusyCursor();
+        beginUndo();
+        try {
+            if (redo) {
+                restoreInitialRotations(primary, initialPrimary);
+                if (secondarySkel) {
+                    restoreInitialRotations(secondarySkel, initialSecondary);
+                }
+                redo = false;
+            }
+
+            var iterations = 5;
+
+            if (mode === 0) {
+                var camera = getActiveCamera();
+                if (!camera) {
+                    cancelUndo();
+                    MessageBox.information("Active camera not found.", "Error", "&OK");
+                    return false;
+                }
+                for (var i = 0; i < iterations; i++) {
+                    if (!processSkel(primary, camera)) break;
+                }
+            } else if (mode === 1) {
+                var primaryHead = primary.findBone("head");
+                var secondaryHead = secondarySkel.findBone("head");
+                if (!primaryHead || !secondaryHead) {
+                    cancelUndo();
+                    MessageBox.information("Both figures must have a head bone.", "Error", "&OK");
+                    return false;
+                }
+                for (var i = 0; i < iterations; i++) {
+                    if (!processSkel(primary, secondaryHead)) break;
+                }
+                for (var i = 0; i < iterations; i++) {
+                    if (!processSkel(secondarySkel, primaryHead)) break;
+                }
+            } else if (mode === 2) {
+                var targetObj = sl[1];
+                for (var i = 0; i < iterations; i++) {
+                    if (!processSkel(primary, targetObj)) break;
+                }
+            }
+
+            acceptUndo("Look At operation");
+            redo = true;
+            return true;
+        } catch(e) {
+            cancelUndo();
+            MessageBox.critical("Error during Look At:\n" + e.message, "Look At Error", "&OK");
+            return false;
+        } finally {
+            clearBusyCursor();
+        }
+    }
+
+    var dlg = new DzDialog();
+    dlg.caption = "Look Control (Unified)";
+
+    var layout = new DzVBoxLayout(dlg);
+    layout.margin = 15;
+    layout.spacing = 15;
+
+    var descText = new DzLabel(dlg);
+    descText.text = "Select your figure(s) and configure the options below:";
+    layout.addWidget(descText);
+
+    var modeBoxWidget = new DzWidget(dlg);
+    var modeLayout = new DzHBoxLayout(modeBoxWidget);
+    var lblMode = new DzLabel(modeBoxWidget);
+    lblMode.text = "Target Mode: ";
+    modeLayout.addWidget(lblMode);
+    
+    cmbMode = new DzComboBox(modeBoxWidget);
+    cmbMode.addItem("Look at Camera");
+    cmbMode.addItem("Look at Each Other");
+    cmbMode.addItem("Look at That");
+    modeLayout.addWidget(cmbMode);
+    layout.addWidget(modeBoxWidget);
+
+    chkEyes = new DzCheckBox(dlg);
+    chkEyes.text = "Move Eyes";
+    chkEyes.checked = true;
+    layout.addWidget(chkEyes);
+
+    chkHead = new DzCheckBox(dlg);
+    chkHead.text = "Move Head & Neck";
+    chkHead.checked = true;
+    layout.addWidget(chkHead);
+
+    chkBody = new DzCheckBox(dlg);
+    chkBody.text = "Move Torso (Chest & Abdomen)";
+    chkBody.checked = true;
+    layout.addWidget(chkBody);
+
+    var btnPreview = new DzPushButton(dlg);
+    btnPreview.text = "Preview / Apply";
+    layout.addWidget(btnPreview);
+    btnPreview.clicked.connect(function() {
+        doLookAt();
+    });
+
+    var buttonBoxWidget = new DzWidget(dlg);
+    var buttonBox = new DzHBoxLayout(buttonBoxWidget);
+
+    var btnOK = new DzPushButton(buttonBoxWidget);
+    btnOK.text = "OK";
+    buttonBox.addWidget(btnOK);
+    btnOK.clicked.connect(function() {
+        doLookAt();
+        dlg.close();
+    });
+
+    var btnCancel = new DzPushButton(buttonBoxWidget);
+    btnCancel.text = "Cancel";
+    buttonBox.addWidget(btnCancel);
+    btnCancel.clicked.connect(function() {
+        if (redo) {
+            restoreInitialRotations(primarySkel, initialPrimary);
+            if (secondarySkel) {
+                restoreInitialRotations(secondarySkel, initialSecondary);
+            }
+            redo = false;
+        }
+        dlg.close();
+    });
+
+    layout.addWidget(buttonBoxWidget);
+    dlg.exec();
+
+})();
